@@ -421,7 +421,7 @@ void mqttServerTask(void *parameter)
 ///   Meat Space    ///
 //////////////////////
 void dispenseTreat() {
-  Serial.println("[main] - dispensing treat");
+  Serial.println("[main-dispenseTreat()] - dispensing treat");
 
   digitalWrite(hopperLightBreakSensorLEDPin, HIGH);
   digitalWrite(dispenseLightBreakSensorLEDPin, HIGH);
@@ -433,6 +433,7 @@ void dispenseTreat() {
   unsigned long looptime = millis();;
   unsigned long treatDispenseStartTime = millis();
   continuousServo.writeMicroseconds(1500 + 500);
+  Serial.println("[dispenseTreat] - Starting the motor - writeMicroseconds(1500 + 500) ");
   
   while (dispensingTreat == true) 
   {  
@@ -447,7 +448,7 @@ void dispenseTreat() {
     {
       if(!outOfTreats_hopper)
       {
-        Serial.println("[main] hopper out of treats!");
+        Serial.println("[main] hopper out of treats! - accumulatedDispensingTimeWithoutHopperTreat_ms  > 5000");
         outOfTreats_hopper = true;
       }
     }
@@ -457,11 +458,12 @@ void dispenseTreat() {
     {
       outOfTreats = true;
       dispensingTreat = false;
-      Serial.println("[main] fully out of treats!");
+      Serial.println("[main] fully out of treats! - threshold of 30 seconds for dispensing a treat is exceeded");
       break;
     }
   }
   continuousServo.writeMicroseconds(1500);
+  Serial.println("[dispenseTreat] - Stopping motor - writeMicroseconds(1500) ");
 
   ISR_GUARD = true;
   vTaskDelay(200 / portTICK_PERIOD_MS); // Delay for 200ms to make sure ISR logic is guarded
@@ -471,6 +473,7 @@ void dispenseTreat() {
   if(!outOfTreats) // We just dispensed one
   {
     totalTreatsDispensed++;
+    Serial.println("[dispenseTreat] - if(!outOfTreats) // We just dispensed one");
   }
 
   return;
