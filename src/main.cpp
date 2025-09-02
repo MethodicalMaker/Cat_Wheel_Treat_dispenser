@@ -434,7 +434,7 @@ void mqttServerTask(void *parameter)
 //////////////////////
 void dispenseTreat()
 {
-  Serial.println("[main] - dispensing treat");
+  Serial.println("[main-dispenseTreat()] - dispensing treat");
 
   digitalWrite(hopperLightBreakSensorLEDPin, HIGH);
   digitalWrite(dispenseLightBreakSensorLEDPin, HIGH);
@@ -461,7 +461,7 @@ void dispenseTreat()
     {
       if (!outOfTreats_hopper)
       {
-        Serial.println("[main] hopper out of treats!");
+        Serial.print("[main] hopper out of treats! - accumulatedDispensingTimeWithoutHopperTreat_ms  > 5000");
         outOfTreats_hopper = true;
       }
     }
@@ -471,7 +471,7 @@ void dispenseTreat()
     {
       outOfTreats = true;
       dispensingTreat = false;
-      Serial.println("[main] fully out of treats!");
+      Serial.println("[main] fully out of treats! - threshold of 30 seconds for dispensing a treat is exceeded");
       break;
     }
   }
