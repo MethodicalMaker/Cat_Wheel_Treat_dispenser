@@ -414,11 +414,11 @@ R"(<!DOCTYPE html>
             <div class="status-message status-info" style="margin-bottom: 20px;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
                     <span>Current Progress:</span>
-                    <span><strong>)") + String((hallEffectCount * hallEffectRunDistanceMultiplier)/100) + "/" + String(distanceThreshold / 100) + R"(Meters</strong></span>
+                    <span><strong>)") + String((hallEffectCount * hallEffectRunDistanceMultiplier)/100) + "/" + String(distanceThreshold / 100) + R"( Meters</strong></span>
                 </div>
                 <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
                     <span>Total Distance:</span>
-                    <span><strong>)" + String(totalDistance) + R"(</strong></span>
+                    <span><strong>)" + String(totalDistance / 100) + R"( Meters</strong></span>
                 </div>
                 <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
                     <span>Treats Dispensed:</span>

@@ -1,3 +1,18 @@
+// If the cat wheel can't connect to the saved wifi network, it will kick over into the config AP mode after a
+//   short while, however if something more complex is messed up and you want to clear out the wifi without resetting
+//   other stats, you can change the below define to "true", reflash the code, wait for it to boot, then re-flash
+//   again with the CLEAR_WIFI flag set to false again. you should then be able to reconnect to the setup AP (CAT_WHEEL_SETUP)
+//   and connect to 192.168.4.1 to configure the permanent network connection.
+
+// I don't expect this to be used often, but its at the top since its your main way of fixing the device without access to the
+//   web portal in a way that doesn't reset statistics!
+#define CLEAR_WIFI false
+
+// Other things I expect to possibly be user configurable if oneFastCat comes out with different wheels
+int hallEffectRunDistanceMultiplier = 22; // find the circumferance of your wheel in cm, then divide by the number of magnets you have installed.
+int DEBOUNCE_TIME_HALL = 0;               // if you notice bouncing on wheel pos reads, increase this slowly. too high of a value will ignore rotations if your cat is sanic speed.
+bool DEBUG_DIST = false;
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <AsyncTCP.h>
@@ -11,10 +26,6 @@
 #include <SPIFFS.h>
 #include <Preferences.h> // Replaces EEPROM for ESP32
 #include "mqttConfig.h"
-
-int DEBOUNCE_TIME_HALL = 0; // if you notice bouncing on wheel pos reads, increase this slowly. too high of a value will ignore rotations if your cat is sanic speed.
-bool DEBUG_DIST = true;
-
 
 // Global state machine
 enum class NetworkState
@@ -38,7 +49,8 @@ WiFiConfig config;
 MQTTConfig mqttConf;
 
 WiFiClient espClient;
-PubSubClient mqttClient(espClient);;
+PubSubClient mqttClient(espClient);
+;
 
 // FreeRTOS handles
 TaskHandle_t wifiTaskHandle;
@@ -52,10 +64,8 @@ Preferences preferences; // ESP32's non-volatile storage
 // Statistics (these are populated from non-volatile storage below)
 uint32_t totalDistance = 0;
 uint32_t totalTreatsDispensed = 0;
-
 volatile uint32_t hallEffectCount = 0;
-int hallEffectRunDistanceMultiplier = 22; // find the circumferance of your wheel in cm, then divide by the number of magnets you have installed.
-uint32_t distanceThreshold = 100 * 100;   // 100 meters - we also populate this below, but just in case that doesn't work, we want to make sure its not zero cause it would potentially empty the hopper out.
+uint32_t distanceThreshold = 100 * 100; // 100 meters - we also populate this below, but just in case that doesn't work, we want to make sure its not zero cause it would potentially empty the hopper out.
 
 // io flags
 bool forceDispense = false;
@@ -83,13 +93,12 @@ const int errorLEDPin = 13;
 ezButton hallEffect(hallEffectSensorPin);
 Servo continuousServo;
 
-
 // ISR handlers for light break sensors. We want to detect treats as fast as we can, so we use interrupts instead of checking in main runtime logic!
 void IRAM_ATTR handleHopperPhotoDiodeISR()
 {
-  if(!ISR_GUARD)
+  if (!ISR_GUARD)
   {
-    accumulatedDispensingTimeWithoutHopperTreat_ms = 0;  // Reset when we see a treat
+    accumulatedDispensingTimeWithoutHopperTreat_ms = 0; // Reset when we see a treat
     outOfTreats_hopper = false;
   }
 }
@@ -98,9 +107,6 @@ void IRAM_ATTR handleDispensePhotoDiodeISR()
 {
   dispensingTreat = false;
 }
-
-
-
 
 // Memory check function for ESP32
 int freeMemory()
@@ -111,8 +117,19 @@ int freeMemory()
 void setup()
 {
   Serial.begin(115200);
-  Serial.println("starting setup");
 
+  if (CLEAR_WIFI)
+  {
+    clearWifi();
+    while (true)
+    {
+      Serial.println("WiFi settings have been cleared. It is now safe to re-flash the device with the CLEAR_WIFI flag set back to false");
+      Serial.println("\t\tThis message will repeat and normal booting is inturrupted until the device is re-flashed!n\n");
+      delay(5000);
+    }
+  }
+
+  Serial.println("starting setup");
 
   // init physical stuff
   hallEffect.setDebounceTime(DEBOUNCE_TIME_HALL);
@@ -122,23 +139,20 @@ void setup()
   pinMode(dispenseLightBreakSensorLEDPin, OUTPUT);
   pinMode(hopperLightBreakSensorLEDPin, OUTPUT);
   pinMode(errorLEDPin, OUTPUT);
-  //pinMode(resetWifiButtonPin, INPUT_PULLUP);
-  //pinMode(resetErrorButtonPin, INPUT_PULLUP);
+  // pinMode(resetWifiButtonPin, INPUT_PULLUP);
+  // pinMode(resetErrorButtonPin, INPUT_PULLUP);
   pinMode(dispenseLightBreakSensorPin, INPUT_PULLUP);
   pinMode(hopperLightBreakSensorPin, INPUT_PULLUP);
 
   attachInterrupt(digitalPinToInterrupt(dispenseLightBreakSensorPin), handleDispensePhotoDiodeISR, FALLING);
   attachInterrupt(digitalPinToInterrupt(hopperLightBreakSensorPin), handleHopperPhotoDiodeISR, FALLING);
 
-
-
-  // Initialize Preferences (replaces EEPROM)
-  preferences.begin("conf", false);
-
   // First, see if we have done the initial settings write after a reset
+  preferences.begin("conf", false); // open prefs to set our config.
   if (!preferences.getBool("initialSettings", false))
   {
     Serial.println("[main] - setting initial config");
+    preferences.end(); // setInitialConfig will call save functions, which open up the prefs, so close it here first!!!
     setInitialConfig();
   }
   else
@@ -148,7 +162,7 @@ void setup()
     {
       preferences.getBytes("config", &config, configSize);
     }
-    
+
     distanceThreshold = preferences.getInt("dist");
     mqttConf.server = preferences.getString("mqttServer");
     mqttConf.username = preferences.getString("mqttUser");
@@ -156,14 +170,11 @@ void setup()
     mqttConf.topicPrefix = preferences.getString("mqttTopic");
     mqttConf.port = preferences.getInt("mqttPort");
     mqttConf.mqttEnabled = preferences.getBool("mqttEnable");
-    preferences.end();
 
-
-    distanceThreshold = preferences.getInt("dist", 100 * 100);
     totalDistance = preferences.getInt("totalDistance");
     totalTreatsDispensed = preferences.getInt("totalTreatsDispensed");
+    preferences.end();
   }
-  preferences.end();
 
   // Create FreeRTOS resources
   wifiQueue = xQueueCreate(1, sizeof(WiFiConfig));
@@ -191,15 +202,15 @@ void setup()
       ;
   }
 
-  // if (pdPASS != xTaskCreatePinnedToCore(saveStatisticsTask, "saveStatistics", 1024, NULL, 1, NULL, 1))
-  // {
-  //   Serial.println("Failed to create statistics task!");
-  //   while (1)
-  //     ;
-  // }
+  if (pdPASS != xTaskCreatePinnedToCore(saveStatisticsTask, "saveStatistics", 1024, NULL, 1, NULL, 1))
+  {
+    Serial.println("Failed to create statistics task!");
+    while (1)
+      ;
+  }
 
-  //Run our main task on its own core to avoid timing issues with physical motion
-  if (pdPASS != xTaskCreatePinnedToCore(mainTask, "led_blink", 2048, NULL, 1, NULL, 0))
+  // Run our main task on its own core to avoid timing issues with physical motion
+  if (pdPASS != xTaskCreatePinnedToCore(mainTask, "main", 2048, NULL, 1, NULL, 0))
   {
     Serial.println("Failed to create test led task!");
     while (1)
@@ -208,7 +219,6 @@ void setup()
 
   Serial.println("setup complete");
   // No need to call vTaskStartScheduler() - it's automatically called by ESP32 Arduino core
-
 }
 
 void loop()
@@ -226,11 +236,11 @@ void mainTask(void *pvParameters)
   Serial.println("[main]: task starting...");
 
   continuousServo.writeMicroseconds(1500); // Write a stop command, since if the MCU resets during motor movement, we want to halt it!
-  vTaskDelay(1000 / portTICK_PERIOD_MS); // Delay for 1 second before starting task loop to make sure everything is setup.
+  vTaskDelay(1000 / portTICK_PERIOD_MS);   // Delay for 1 second before starting task loop to make sure everything is setup.
 
-  while(1)
+  while (1)
   {
-    if(outOfTreats)
+    if (outOfTreats)
     {
       digitalWrite(errorLEDPin, HIGH);
     }
@@ -239,36 +249,37 @@ void mainTask(void *pvParameters)
       digitalWrite(errorLEDPin, LOW);
     }
 
-
     hallEffect.loop();
-    if(hallEffect.isPressed())
+    if (hallEffect.isPressed())
     {
       hallEffectCount++;
       totalDistance += hallEffectRunDistanceMultiplier;
-      if(DEBUG_DIST)
+      if (DEBUG_DIST)
       {
         Serial.println("distance:");
-        Serial.print("\t"); Serial.println(hallEffectCount * hallEffectRunDistanceMultiplier);
+        Serial.print("\t");
+        Serial.println(hallEffectCount * hallEffectRunDistanceMultiplier);
         Serial.println("distance threshold:");
-        Serial.print("\t"); Serial.println(distanceThreshold);
+        Serial.print("\t");
+        Serial.println(distanceThreshold);
         Serial.println("");
       }
     }
 
-    if ((!outOfTreats && hallEffectCount * hallEffectRunDistanceMultiplier >= distanceThreshold) || forceDispense) {
+    if ((!outOfTreats && hallEffectCount * hallEffectRunDistanceMultiplier >= distanceThreshold) || forceDispense)
+    {
       hallEffectCount = 0;
       forceDispense = false;
       dispenseTreat();
     }
     vTaskDelay(5 / portTICK_PERIOD_MS); // Delay for 5ms
   }
-
 }
 
 void saveStatisticsTask(void *pvParameters)
 {
   // This is for logging on device. in the future it would probably be good to see if theres a newer value we can read back off from mqtt, but eh - good enough for now.
-  // because MCU's have limited write cycles to their memory, we want to limit how often we store our values. Assuming we write once an hour, and memory fails at 100k writes, this shouldn't be an issue for ~11.5 years.
+  // because MCU's have limited write cycles to their memory, we want to limit how often we store our values. Assuming we write once every 30 min, and memory fails at 100k writes, this shouldn't be an issue for ~5.75 years.
   // We also only write if values change.
 
   uint32_t lastSavedTotalDistance = 0;
@@ -280,15 +291,19 @@ void saveStatisticsTask(void *pvParameters)
   {
     if (totalDistance > lastSavedTotalDistance)
     {
-      lastSavedTotalDistance = totalDistance;
+      preferences.begin("conf", false);
       preferences.putInt("totalDistance", lastSavedTotalDistance);
+      preferences.end();
+      lastSavedTotalDistance = totalDistance;
     }
     if (totalTreatsDispensed > lastSavedTotalTreatsDispensed)
     {
-      lastSavedTotalTreatsDispensed = totalTreatsDispensed;
+      preferences.begin("conf", false);
       preferences.putInt("totalTreatsDispensed", lastSavedTotalTreatsDispensed);
+      preferences.end();
+      lastSavedTotalTreatsDispensed = totalTreatsDispensed;
     }
-    vTaskDelay(pdMS_TO_TICKS(3600000)); // 1 hour
+    vTaskDelay(pdMS_TO_TICKS(1800000)); // 30 minutes
   }
 }
 
@@ -383,8 +398,6 @@ void mqttServerTask(void *parameter)
   uint32_t lastMqttPublishTime = 0;
   int mqttPublishInterval = (1000 * 60 * 5); // every 5 minutes
 
-  mqttClient.setCallback(mqttCallback);
-
   while (1)
   {
     while (mqttConf.mqttEnabled && networkState == NetworkState::CONNECTED)
@@ -410,42 +423,43 @@ void mqttServerTask(void *parameter)
       {
         mqttClient.loop();
       }
-
     }
     Serial.println("[mqtt] - waiting to be enabled...");
-    vTaskDelay(60000 / portTICK_PERIOD_MS); // Delay for 10 seconds
+    vTaskDelay(5000 / portTICK_PERIOD_MS); // Delay for 5 seconds
   }
 }
 
 ////////////////////////
 ///   Meat Space    ///
 //////////////////////
-void dispenseTreat() {
+void dispenseTreat()
+{
   Serial.println("[main] - dispensing treat");
 
   digitalWrite(hopperLightBreakSensorLEDPin, HIGH);
   digitalWrite(dispenseLightBreakSensorLEDPin, HIGH);
-  vTaskDelay(200 / portTICK_PERIOD_MS); // Delay for 200ms to make sure light break sensor is reading high
+  vTaskDelay(700 / portTICK_PERIOD_MS); // Delay for 200ms to make sure light break sensor is reading high
 
   ISR_GUARD = false;
   dispensingTreat = true;
 
-  unsigned long looptime = millis();;
+  unsigned long looptime = millis();
+  ;
   unsigned long treatDispenseStartTime = millis();
   continuousServo.writeMicroseconds(1500 + 500);
-  
-  while (dispensingTreat == true) 
-  {  
+
+  while (dispensingTreat == true)
+  {
     vTaskDelay(1 / portTICK_PERIOD_MS); // Delay for 1ms, this is needed or the watchdog for the task will kill it!
 
-    // yeah, this isn't the ideal way to do the timing, but it works. 
-    //we want this so our hopper time carries over between dispense treat calls
+    // yeah, this isn't the ideal way to do the timing, but it works.
+    // we want this so our hopper time carries over between dispense treat calls
     //  (ie, nothing detected for 4 of 5 seconds, treat leaves main body, dispenseTreat is called again, it should detect hopper empty after 1 more second.)
     accumulatedDispensingTimeWithoutHopperTreat_ms += millis() - looptime;
     looptime = millis();
-    if (accumulatedDispensingTimeWithoutHopperTreat_ms  > 5000)
+    if (accumulatedDispensingTimeWithoutHopperTreat_ms > 5000)
     {
-      if(!outOfTreats_hopper)
+      if (!outOfTreats_hopper)
       {
         Serial.println("[main] hopper out of treats!");
         outOfTreats_hopper = true;
@@ -468,15 +482,13 @@ void dispenseTreat() {
   digitalWrite(hopperLightBreakSensorLEDPin, LOW);
   digitalWrite(dispenseLightBreakSensorLEDPin, LOW);
 
-  if(!outOfTreats) // We just dispensed one
+  if (!outOfTreats) // We just dispensed one
   {
     totalTreatsDispensed++;
   }
 
   return;
 }
-
-
 
 ////////////////////////
 ///   MQTT Logic    ///
@@ -489,6 +501,8 @@ void mqttReconnect()
   if (mqttClient.connect("Cat_wheel", mqttConf.username.c_str(), mqttConf.password.c_str()))
   {
     Serial.println("\tconnected");
+    mqttClient.setCallback(mqttCallback);
+    mqttClient.subscribe((mqttConf.topicPrefix + "/manualDispense").c_str());
   }
   else
   {
@@ -502,6 +516,7 @@ void mqttPublishUsageStats()
   mqttClient.publish((mqttConf.topicPrefix + "/totalDistance").c_str(), String(totalDistance / 100).c_str());
   mqttClient.publish((mqttConf.topicPrefix + "/totalTreatsDispensed").c_str(), String(totalTreatsDispensed).c_str());
   mqttClient.publish((mqttConf.topicPrefix + "/isOutOfTreats").c_str(), String(outOfTreats ? "True" : "False").c_str());
+  Serial.print(".");
 }
 
 void mqttCallback(char *topic, byte *payload, unsigned int length)
@@ -580,15 +595,20 @@ void saveConfig()
   preferences.end();
 
   Serial.println("Configuration saved");
-
 }
 
 void clearConfig()
 {
-  preferences.begin("conf", false);
-  preferences.remove("mqttconfig");
-  preferences.end();
-  setInitialConfig();
+  distanceThreshold = 100 * 100; // 100 meters
+
+  mqttConf.password = "xxxxx";
+  mqttConf.port = 1883;
+  mqttConf.server = "10.4.0.4";
+  mqttConf.topicPrefix = "/iot/device/catwheel/";
+  mqttConf.username = "cat_wheel";
+  mqttConf.mqttEnabled = false;
+
+  saveConfig();
   Serial.println("Configuration cleared");
 }
 
@@ -611,9 +631,8 @@ void clearWifi()
 void setInitialConfig()
 {
   distanceThreshold = 100 * 100; // 100 meters
-  preferences.putInt("dist", distanceThreshold);
 
-  mqttConf.password ="xxxxx";
+  mqttConf.password = "xxxxx";
   mqttConf.port = 1883;
   mqttConf.server = "10.4.0.4";
   mqttConf.topicPrefix = "/iot/device/catwheel/";
@@ -624,7 +643,11 @@ void setInitialConfig()
   memset(&config, 0, configSize);
   saveConfig();
   saveWifi();
+
+  // this isn't in the normal save commands - so do it here as a one off begin / end
+  preferences.begin("conf", false);
   preferences.putBool("initialSettings", true);
+  preferences.end();
 }
 
 ////////////////////////
@@ -668,6 +691,8 @@ void setupWebServerRoutes(AsyncWebServer &server)
         strncpy(send_msg.ssid, ssid.c_str(), sizeof(config.ssid));
         strncpy(send_msg.password, pass.c_str(), sizeof(config.password));
         xQueueSend(wifiQueue, &send_msg, portMAX_DELAY);
+
+        saveWifi();
 
         String response = String(AP_CONFIG_PAGE_HEADER) + 
                         COMMON_HEADER +
@@ -737,11 +762,10 @@ void setupWebServerRoutes(AsyncWebServer &server)
           clearWifi();
           vTaskDelay(1500 / portTICK_PERIOD_MS);
           ESP.restart();
-          });
-        });
+          }); });
 
   server.on("/reset_config", HTTP_GET, [](AsyncWebServerRequest *request)
-        {
+            {
     String response = String(MAIN_PAGE_HEADER) + 
                     COMMON_HEADER +
                     R"(
@@ -755,8 +779,7 @@ void setupWebServerRoutes(AsyncWebServer &server)
     request->send(200, "text/html", response); 
     request->onDisconnect([]() {
       clearConfig();
-      });
-    });
+      }); });
 
   server.on("/resetErrorStates", HTTP_POST, [](AsyncWebServerRequest *request)
             {
@@ -784,6 +807,7 @@ void setupWebServerRoutes(AsyncWebServer &server)
                         <div class="status-message status-info">
                             <p>Device is restarting...</p>
                         </div>
+                        <meta http-equiv="refresh" content="5;url=/">
                         )" + 
                         COMMON_FOOTER;
         request->send(200, "text/html", response);
@@ -832,6 +856,13 @@ void setupWebServerRoutes(AsyncWebServer &server)
 
   server.on("/settings", HTTP_POST, [](AsyncWebServerRequest *request)
             {
+              // Process updating the distance target
+              if (request->hasParam("distanceThreshold", true))
+              {
+                //we expect a dist in meters, but internally use cm
+                distanceThreshold = request->getParam("distanceThreshold", true)->value().toInt() * 100;
+              }
+
               // Process MQTT settings
               if (request->hasParam("mqttServer", true))
               {
